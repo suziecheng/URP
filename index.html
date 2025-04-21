@@ -28,41 +28,110 @@
     maxZoom: 19
   }).addTo(map);
 
-  const files = ['NTA2020.geojson', 'L1.geojson', 'L2.geojson', 'L3.geojson', 'shadowtransit.geojson'];
-
-  const colors = {
-    L1: 'yellow',
-    L2: 'orange',
-    L3: 'red',
-    shadow: 'purple'
-  };
-
-  function styleLayer(level) {
-    return {
-      color: colors[level],
-      weight: level === 'shadow' ? 2 : 4,
-      fillColor: colors[level],
-      fillOpacity: 0.6
-    };
+  function getColor(pct) {
+    return pct > 50 ? "#800026" :
+           pct > 30 ? "#BD0026" :
+           pct > 20 ? "#E31A1C" :
+           pct > 10 ? "#FC4E2A" :
+           pct > 5  ? "#FD8D3C" :
+           pct > 0  ? "#FEB24C" :
+                      "#FFEDA0";
   }
 
   
-  files.forEach(file => {
-    const level = file.includes('L1') ? 'L1' :
-                  file.includes('L2') ? 'L2' :
-                  file.includes('L3') ? 'L3' :
-                  'shadow';
+  const layerGroups = {
+      density: L.layerGroup().addTo(map),
+      L1: L.layerGroup().addTo(map),
+      L2: L.layerGroup().addTo(map),
+      L3: L.layerGroup().addTo(map),
+      vans: L.layerGroup().addTo(map)
+  };
 
-    fetch(file)
-      .then(response => response.json())
+  const overlays = {
+      "Chinese Population Density": layerGroups.density,
+      "Level 1 (Individual Shops)": layerGroups.L1,
+      "Level 2 (Community Infra)": layerGroups.L2,
+      "Level 3 (Institutional Infra)": layerGroups.L3,
+      "Dollar Vans": layerGroups.vans
+    };
+    L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+
+
+fetch("NTA2020.geojson")
+      .then(res => res.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: feature => ({
+            fillColor: getColor(feature.properties.chinese_pct),
+            fillOpacity: 0.6,
+            color: "#999",
+            weight: 0.5
+          }),
+          onEachFeature: (feature, layer) => {
+            const name = feature.properties.NTAName;
+            const pct = feature.properties.chinese_pct?.toFixed(1) ?? "N/A";
+            layer.bindPopup(`<strong>${name}</strong><br>Chinese %: ${pct}%`);
+          }
+        }).addTo(layerGroups.density);
+      });
+
+  fetch("L1.geojson")
+      .then(res => res.json())
       .then(data => {
         L.geoJSON(data, {
           pointToLayer: (feature, latlng) =>
-            level !== 'shadow' ? L.circleMarker(latlng, styleLayer(level)) : undefined,
-          style: level === 'shadow' ? styleLayer(level) : undefined
-        }).addTo(map);
+            L.circleMarker(latlng, {
+              radius: 5,
+              fillColor: "yellow",
+              fillOpacity: 0.8,
+              color: "#000",
+              weight: 1
+            }).bindPopup(feature.properties.Business_Name)
+        }).addTo(layerGroups.L1);
       });
-  });
+
+  fetch("L2.geojson")
+      .then(res => res.json())
+      .then(data => {
+        L.geoJSON(data, {
+          pointToLayer: (feature, latlng) =>
+            L.circleMarker(latlng, {
+              radius: 5,
+              fillColor: "orange",
+              fillOpacity: 0.8,
+              color: "#000",
+              weight: 1
+            }).bindPopup(feature.properties.Business_Name)
+        }).addTo(layerGroups.L2);
+      });
+
+fetch("L3.geojson")
+      .then(res => res.json())
+      .then(data => {
+        L.geoJSON(data, {
+          pointToLayer: (feature, latlng) =>
+            L.circleMarker(latlng, {
+              radius: 5,
+              fillColor: "red",
+              fillOpacity: 0.8,
+              color: "#000",
+              weight: 1
+            }).bindPopup(feature.properties.Business_Name)
+        }).addTo(layerGroups.L3);
+      });
+
+  fetch("shadowtransit.geojson")
+      .then(res => res.json())
+      .then(data => {
+        L.geoJSON(data, {
+          style: {
+            color: "purple",
+            weight: 2
+          }
+        }).addTo(layerGroups.vans);
+      });
+  
+  
 </script>
 
 </body>
