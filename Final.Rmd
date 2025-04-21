@@ -1,0 +1,527 @@
+---
+title: "URP Final Project"
+author: "Susan Cheng"
+date: "2025-04-20"
+output: html_document
+---
+
+```{r message=FALSE}
+#set path
+setwd("/Users/susancheng/Desktop/URPfinal")
+
+#install.packages('tidyverse')
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(tigris)
+
+#html reading
+library(rvest)
+library(dplyr)
+library(stringr)
+library(readr)
+
+#read screenshots
+library(tesseract)
+library(magick)
+library(dplyr)
+library(tibble)
+
+#google api
+library(httr)
+library(jsonlite)
+
+#create map
+library(leaflet)
+library(sf)
+library(RColorBrewer)
+
+```
+
+
+Cleaning Fantuan Food Places HTML
+```{r}
+neighborhood_pattern <- "(?i)\\((.*?brooklyn.*?|BK|flushing|elmhurst|chinatown|manhattan downtown|grand st|lafayette)\\)"
+
+fantuan_html <- function(file_path, neighborhood_label) {
+  page <- read_html(file_path)
+
+  #get name of establishment
+  orig_names <- page %>%
+    html_nodes(".info .name") %>%
+    html_text(trim = TRUE)
+  
+  #filter data to only include est in selected neighborhoods
+  filtered_names <- orig_names[str_detect(orig_names, neighborhood_pattern)]
+  
+  #clean name to remove beginning promo and end neighborhood
+  clean_names <- filtered_names %>%
+    str_remove("^((0\\.01 Sale|\\$?\\d+(-\\$?\\d+)?%?\\s*OFF|\\d+%?)\\s*\\|\\s*)") %>%
+    str_remove("\\s*\\([^\\)]*\\)") %>%
+    str_trim()
+    
+  #output dataframe
+  tibble(
+    Original = filtered_names,
+    Cleaned = clean_names,
+    Neighborhood = neighborhood_label
+  )
+}
+```
+
+
+Fantuan Neighborhood HTML to Database
+```{r}
+flushing <- fantuan_html("flushingfood.html", "Flushing")
+elmhurst <- fantuan_html("elmhurstfood.html", "Elmhurst")
+chinatown <- fantuan_html("chinatownfood.html", "Chinatown")
+sunsetpark <- fantuan_html("sunsetparkfood.html", "Sunset Park")
+
+#combine into one dataframe
+all_data <- bind_rows(flushing, elmhurst, chinatown, sunsetpark)
+
+#save to CSV
+write_csv(all_data, "fantuan_restaurants.csv")
+
+#print dataframe summary
+all_data %>%
+  count(Neighborhood, sort = TRUE) %>%
+  print()
+```
+
+
+Hungry Panda Screenshot Text Scraping
+```{r}
+# ocr_engine <- tesseract("chi_sim")
+# image_folder <- "hungrypanda"
+# image_files <- list.files(image_folder, full.names = TRUE, pattern = "\\.(jpg|jpeg|png)$")
+# 
+# #extract text
+# results <- lapply(image_files, function(file) {
+#   img <- image_read(file)
+#   text <- ocr(img, engine = ocr_engine)
+#   tibble(File = basename(file), RawText = text)
+# })
+# 
+# #combine into dataframe
+# ocr_data <- bind_rows(results)
+# write.csv(ocr_data, "hungrypanda_text.csv", row.names = FALSE)
+
+```
+
+
+Hungry Panda Text to Database
+```{r}
+# assign_neighborhood <- function(filename) {
+#   num <- as.numeric(gsub("\\D", "", filename))
+#   if (num <= 5070) {
+#     return("Flushing")
+#   } else if (num <= 5084) {
+#     return("Elmhurst")
+#   } else if (num <= 5136) {
+#     return("Sunset Park")
+#   } else {
+#     return("Chinatown")
+#   }
+# }
+# ocr_data$Neighborhood <- sapply(ocr_data$File, assign_neighborhood)
+# 
+# #text into lines
+# expanded <- ocr_data %>%
+#   mutate(Lines = strsplit(RawText, "\n")) %>%
+#   tidyr::unnest(Lines) %>%
+#   mutate(Business_Name = str_trim(Lines)) %>%
+#   filter(nchar(Business_Name) > 2) %>%
+#   select(Business_Name, Neighborhood)
+# 
+# #filter non business words
+# non_name_keywords <- c(
+#   "分钟", "距离", "评分", "红包", "优惠", "下单", "折", "热销", "配送", "商家", "元", "自取", "专送", 
+#   "可取", "代金券", "秒", "爆品", "店", "已售", "点餐", "起送", "欢迎", "限时", "券",
+#   "限量", "专属", "抢购", "服务", "套餐", "价格", "活动", "订单", "人", "热卖", "推荐", "满减", "满"
+# )
+# non_name_pattern <- paste(non_name_keywords, collapse = "|")
+# 
+# #set up business names
+# final_hp <- expanded %>%
+#   filter(
+#     !str_detect(Business_Name, non_name_pattern),
+#     str_detect(Business_Name, "^[\\u4e00-\\u9fa5A-Za-zA-Z0-9·\\s\\-\\.]+$"),
+#     str_length(Business_Name) > 2
+#   ) %>%
+#   distinct()
+# 
+# write.csv(final_hp, "hungrypanda_restaurants.csv", row.names = FALSE)
+
+```
+
+
+Combine Both Databases
+```{r}
+fantuan <- read_csv("fantuan_restaurants.csv")
+hungrypanda <- read_csv("hungrypanda_restaurants.csv")
+
+fantuan_clean <- fantuan %>%
+  select(Business_Name = Cleaned, Neighborhood) %>%
+  mutate(Source = "Fantuan", Level = 1)
+
+hungrypanda_clean <- hungrypanda %>%
+  select(Business_Name, Neighborhood) %>%
+  mutate(Source = "HungryPanda", Level = 1)
+
+combined <- bind_rows(fantuan_clean, hungrypanda_clean)
+
+write_csv(combined, "all_restaurants.csv")
+
+combined %>%
+  count(Neighborhood, sort = TRUE) %>%
+  print()
+
+```
+
+
+Google API Geocode
+```{r}
+api_key <- "AIzaSyCDT9A2o4bJ3k0--cXcINWjzXUuMgtiqwg"
+
+#all restaurants
+restaurants <- read_csv("all_restaurants.csv")
+
+#geocode restaurants
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+geocode_place <- function(name, neighborhood) {
+  query <- paste(name, neighborhood, "New York")
+  url <- "https://maps.googleapis.com/maps/api/place/textsearch/json"
+  res <- GET(url, query = list(query = query, key = api_key))
+  
+  text_content <- content(res, as = "text", encoding = "UTF-8")
+  json <- tryCatch(fromJSON(text_content), error = function(e) NULL)
+  
+  if (!is.null(json) && json$status == "OK" && !is.null(json$results) && is.data.frame(json$results) && nrow(json$results) > 0) {
+    result <- json$results[1, ]
+    return(tibble(
+      Business_Name = name,
+      Neighborhood = neighborhood,
+      Address = result$formatted_address %||% NA,
+      Latitude = result$geometry$location$lat %||% NA,
+      Longitude = result$geometry$location$lng %||% NA,
+      Geocode_Status = "Success"
+    ))
+  } else {
+    return(tibble(
+      Business_Name = name,
+      Neighborhood = neighborhood,
+      Address = NA,
+      Latitude = NA,
+      Longitude = NA,
+      Geocode_Status = "Failed"
+    ))
+  }
+}
+
+#geocode rows
+geocoded_all <- bind_rows(lapply(1:nrow(restaurants), function(i) {
+  Sys.sleep(0.5)
+  geocode_place(restaurants$Business_Name[i], restaurants$Neighborhood[i])
+}))
+
+#track failed geocodes
+geocoded_success <- geocoded_all %>% filter(Geocode_Status == "Success") %>%
+  distinct(Business_Name, Latitude, Longitude, .keep_all = TRUE)
+
+geocoded_failed <- geocoded_all %>% filter(Geocode_Status == "Failed")
+
+
+#csv files for both
+write_csv(geocoded_success, "geocoded_restaurants.csv")
+write_csv(geocoded_failed, "geocode_failed.csv")
+
+#print results
+cat("\n✅ Geocode Success Counts by Neighborhood:\n")
+print(geocoded_success %>% count(Neighborhood, sort = TRUE))
+
+cat("\n❌ Total Failed Geocodes:", nrow(geocoded_failed), "\n")
+
+```
+
+
+Level 2 & 3 Markers of Community Geocode
+```{r}
+api_key <- "AIzaSyCDT9A2o4bJ3k0--cXcINWjzXUuMgtiqwg"
+
+#neighborhoods and L2 & L3 definers
+neighborhoods <- c("Flushing, NY", "Chinatown Manhattan, NY", "Elmhurst, NY", "Sunset Park, NY")
+
+l2_terms <- c(
+  "Chinese supermarket", "Chinese grocery store", "Chinese temple", "Chinese church",
+  "Chinese senior center", "Chinese community center", "Chinese association", 
+  #"Chinese gathering park", "Chinese tai chi park", "Mahjong park", "Flushing Kissena Park", "Columbus Park", "Sunset Park Chinese community",
+  "华人超市", "华超", "中国超市", "华人杂货店", "華人寺庙", "佛堂", "佛教中心", "华人教会", "基督教堂",
+  "华人老人中心", "老人日托", "华人社区中心", "华侨会馆", "同乡会", "侨团", "公所"
+  #"公园", "广场舞", "太极", "麻将", "下象棋", "公园唱歌", "公园戏曲", "华人公园", "华人聚集地", "老人聚集地", "带孩子玩", "社区活动公园"
+)
+
+
+l3_terms <- c(
+  "Chinese bank", "Chinese real estate", "Chinese school", "Chinese media", "Chinese newspaper",
+  "华人银行", "中资银行", "中国银行", "华人地产", "房产中介", "房地产公司",
+  "中文学校", "华人学校", "补习班", "华人媒体", "中文报纸", "华人日报", "星岛日报"
+)
+
+
+#search
+search_places <- function(keyword, location, level) {
+  url <- "https://maps.googleapis.com/maps/api/place/textsearch/json"
+  res <- GET(url, query = list(query = paste(keyword, location), key = api_key))
+  text <- content(res, as = "text", encoding = "UTF-8")
+  json <- tryCatch(fromJSON(text), error = function(e) NULL)
+
+  cat("🔍", keyword, "|", location, "| Status:", json$status, "\n")
+
+  if (!is.null(json) && json$status == "OK" && !is.null(json$results) && nrow(json$results) > 0) {
+    df <- json$results
+
+    tibble(
+      Business_Name = df$name,
+      Address = df$formatted_address,
+      Latitude = df$geometry$location$lat,
+      Longitude = df$geometry$location$lng,
+      Keyword = keyword,
+      Neighborhood = location,
+      Level = level
+    )
+  } else {
+    tibble()
+  }
+}
+
+
+#loop for L2 & L3
+run_queries <- function(keywords, level) {
+  bind_rows(lapply(neighborhoods, function(n) {
+    bind_rows(lapply(keywords, function(k) {
+      Sys.sleep(0.5)
+      search_places(k, n, level)
+    }))
+  }))
+}
+
+l2_results <- run_queries(l2_terms, 2)
+l3_results <- run_queries(l3_terms, 3)
+
+
+#csv files
+all_results <- bind_rows(l2_results, l3_results)
+write_csv(all_results, "googleresults.csv")
+
+#print results
+
+results_summary <- all_results %>%
+  group_by(Neighborhood, Level) %>%
+  summarise(Count = n(), .groups = "drop") %>%
+  arrange(desc(Neighborhood), Level)
+
+print(results_summary)
+
+```
+
+
+Chinese Population Setup
+```{r}
+census_api_key("5b88206d026d7cbdb6150604229dc66a9815f61b", install = TRUE)
+readRenviron("~/.Renviron")
+```
+
+NTA Neighborhood Shapefile
+```{r}
+nta <- st_read("NTA2020.geojson") %>%
+  st_transform(crs = 4326)
+```
+
+GeoJSON L1, L2, L3
+```{r}
+#load files
+l1 <- read_csv("geocoded_restaurants.csv")
+l23 <- read_csv("googleresults.csv")
+
+#convert to sf
+l1_sf <- st_as_sf(l1, coords = c("Longitude", "Latitude"), crs = 4326)
+l23_sf <- st_as_sf(l23, coords = c("Longitude", "Latitude"), crs = 4326)
+
+#split by level
+l2_sf <- l23_sf %>% filter(Level == 2)
+l3_sf <- l23_sf %>% filter(Level == 3)
+
+#keep only results within NYC
+l2_sf_clean <- l2_sf[apply(st_intersects(l2_sf, nyc_boundary, sparse = FALSE), 1, any), ]
+l3_sf_clean <- l3_sf[apply(st_intersects(l3_sf, nyc_boundary, sparse = FALSE), 1, any), ]
+
+#save GeoJSONs
+st_write(l1_sf, "L1.geojson", delete_dsn = TRUE)
+st_write(l2_sf_clean, "L2.geojson", delete_dsn = TRUE)
+st_write(l3_sf_clean, "L3.geojson", delete_dsn = TRUE)
+```
+
+
+Chinese Population
+```{r}
+total_pop <- get_acs(
+  geography = "tract",
+  variables = "B02001_001",
+  state = "NY",
+  county = c("Bronx", "Kings", "New York", "Queens", "Richmond"),
+  geometry = TRUE,
+  year = 2021
+)
+
+chinese_pop <- get_acs(
+  geography = "tract",
+  variables = "B02018_007",
+  state = "NY",
+  county = c("Bronx", "Kings", "New York", "Queens", "Richmond"),
+  geometry = TRUE,
+  year = 2021
+)
+
+pop_data <- total_pop %>%
+  select(GEOID, total = estimate, geometry) %>%
+  left_join(
+    chinese_pop %>% st_drop_geometry() %>% select(GEOID, chinese = estimate),
+    by = "GEOID"
+  ) %>%
+  mutate(chinese = ifelse(is.na(chinese), 0, chinese),
+         chinese_pct = (chinese / total) * 100)
+
+```
+
+
+Pop by neighborhood
+```{r}
+nta <- st_transform(nta, crs = st_crs(pop_data))
+
+joined <- st_join(pop_data, nta, join = st_intersects)
+
+nta_chinese_pct <- joined %>%
+  group_by(NTAName) %>%
+  summarise(
+    total_pop = sum(total, na.rm = TRUE),
+    chinese_pop = sum(chinese, na.rm = TRUE)
+  ) %>%
+  mutate(chinese_pct = (chinese_pop / total_pop) * 100) %>%
+  arrange(desc(chinese_pct))
+
+st_write(nta_chinese_pct, "nta_chinese_percent.geojson", delete_dsn = TRUE)
+
+```
+
+Chinatown transit score
+```{r}
+transit_scores <- tibble::tibble(
+  Neighborhood = c("Flushing", "Elmhurst", "Sunset Park", "Chinatown Manhattan"),
+  Transit_Score = c(5, 3, 4, 5)
+)
+
+```
+
+
+Chinatown Connectivity Index (CCI)
+```{r}
+cci_inputs <- tibble(
+  Neighborhood = c("Flushing", "Elmhurst", "Sunset Park", "Chinatown Manhattan"),
+  
+  L1 = c(695, 72, 416, 177),
+  L2 = c(283, 299, 286, 216),
+  L3 = c(208, 194, 158, 176),
+  
+  Chinese_Pop_Pct = c(75.7, 21.0, 18.1, 21.5),
+  
+  Transit_Score = c(5, 3, 4, 5)
+)
+
+```
+
+Normalize CCI
+```{r}
+normalize <- function(x) {
+  (x - min(x)) / (max(x) - min(x))
+}
+
+cci_normalized <- cci_inputs %>%
+  mutate(
+    L1_norm = normalize(L1),
+    L2_norm = normalize(L2),
+    L3_norm = normalize(L3),
+    Pop_norm = normalize(Chinese_Pop_Pct),
+    Transit_norm = normalize(Transit_Score)
+  )
+
+cci_final <- cci_normalized %>%
+  mutate(
+    CCI = L2_norm * 0.35 +
+          L3_norm * 0.25 +
+          L1_norm * 0.20 +
+          Pop_norm * 0.10 +
+          Transit_norm * 0.10
+  ) %>%
+  arrange(desc(CCI))
+
+cci_final %>%
+  select(Neighborhood, CCI) %>%
+  arrange(desc(CCI))
+
+```
+
+
+Create Map
+```{r}
+nta_data <- st_read("nta_chinese_percent.geojson")
+l1 <- st_read("L1.geojson")
+l2 <- st_read("L2.geojson")
+l3 <- st_read("L3.geojson")
+# mta_lines <- st_read("official_transit.geojson")
+dollar_vans <- st_read("shadowtransit.geojson")
+
+# Color scale
+pal <- colorNumeric("YlOrRd", domain = nta_data$chinese_pct)
+
+# Map
+leaflet() %>%
+  addProviderTiles("CartoDB.Positron") %>%
+
+  # Gradient fill for % Chinese
+  addPolygons(
+    data = nta_data,
+    fillColor = ~pal(chinese_pct),
+    fillOpacity = 0.7,
+    color = "#333333",
+    weight = 1,
+    label = ~paste0(NTAName, ": ", round(chinese_pct, 1), "% Chinese")
+  ) %>%
+
+  # L1: yellow
+  addCircleMarkers(data = l1, radius = 4, color = "yellow", fillOpacity = 0.9,
+                   stroke = FALSE, label = ~Business_Name, group = "L1 - Shops") %>%
+
+  # L2: orange
+  addCircleMarkers(data = l2, radius = 5, color = "orange", fillOpacity = 0.9,
+                   stroke = FALSE, label = ~Business_Name, group = "L2 - Community") %>%
+
+  # L3: red
+  addCircleMarkers(data = l3, radius = 6, color = "red", fillOpacity = 0.9,
+                   stroke = FALSE, label = ~Business_Name, group = "L3 - Institutions") %>%
+
+  # Optional: Transit layers
+  # addPolylines(data = mta_lines, color = "blue", weight = 2, group = "MTA") %>%
+  addPolylines(data = dollar_vans, color = "blue", weight = 4, group = "Dollar Vans") %>%
+
+  addLegend("bottomright", pal = pal, values = nta_data$chinese_pct,
+            title = "% Chinese Population", opacity = 0.7) %>%
+
+  addLayersControl(
+    overlayGroups = c("L1 - Shops", "L2 - Community", "L3 - Institutions"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+```
+
