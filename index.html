@@ -40,11 +40,11 @@
 
   
   const layerGroups = {
-      density: L.layerGroup().addTo(map),
       L1: L.layerGroup().addTo(map),
       L2: L.layerGroup().addTo(map),
       L3: L.layerGroup().addTo(map),
-      vans: L.layerGroup().addTo(map)
+      vans: L.layerGroup().addTo(map),
+      density: L.layerGroup().addTo(map)
   };
 
   const overlays = {
@@ -125,8 +125,8 @@ fetch("L3.geojson")
       .then(data => {
         L.geoJSON(data, {
           style: {
-            color: "purple",
-            weight: 2
+            color: "blue",
+            weight: 3
           }
         }).addTo(layerGroups.vans);
       });
