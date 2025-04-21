@@ -22,13 +22,48 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-  // Initialize map
-  const map = L.map('map').setView([40.73, -73.93], 11); // NYC coords
+  const map = L.map('map').setView([40.73, -73.93], 11);
 
-  // Add base map tiles
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19
   }).addTo(map);
 
-  // Load your GeoJSON files
-  const files = ['NTA2020
+  const files = ['NTA2020.geojson', 'L1.geojson', 'L2.geojson', 'L3.geojson', 'shadowtransit.geojson'];
+
+  const colors = {
+    L1: 'yellow',
+    L2: 'orange',
+    L3: 'red',
+    shadow: 'purple'
+  };
+
+  function styleLayer(level) {
+    return {
+      color: colors[level],
+      weight: level === 'shadow' ? 2 : 4,
+      fillColor: colors[level],
+      fillOpacity: 0.6
+    };
+  }
+
+  
+  files.forEach(file => {
+    const level = file.includes('L1') ? 'L1' :
+                  file.includes('L2') ? 'L2' :
+                  file.includes('L3') ? 'L3' :
+                  'shadow';
+
+    fetch(file)
+      .then(response => response.json())
+      .then(data => {
+        L.geoJSON(data, {
+          pointToLayer: (feature, latlng) =>
+            level !== 'shadow' ? L.circleMarker(latlng, styleLayer(level)) : undefined,
+          style: level === 'shadow' ? styleLayer(level) : undefined
+        }).addTo(map);
+      });
+  });
+</script>
+
+</body>
+</html>
