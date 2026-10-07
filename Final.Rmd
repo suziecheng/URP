@@ -182,7 +182,7 @@ combined %>%
 
 Google API Geocode
 ```{r}
-api_key <- "AIzaSyCDT9A2o4bJ3k0--cXcINWjzXUuMgtiqwg"
+api_key <- "redacted"
 
 #all restaurants
 restaurants <- read_csv("all_restaurants.csv")
